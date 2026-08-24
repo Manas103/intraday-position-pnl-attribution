@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+venv/
+.venv/
+*.log
+
+# C++ build output (regenerate with: wsl.exe -d Ubuntu-22.04 -- bash -lc 'cd cpp && make all')
+cpp/build/
+
+# Any generated SQLite database (all DBs in this repo are transient, built
+# from the deterministic simulator at runtime; regenerate by running the
+# scripts under scripts/ or the pytest suite, nothing here is persisted).
+*.db
+*.sqlite
+*.sqlite3

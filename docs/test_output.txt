@@ -1,0 +1,45 @@
+=== pytest (Windows Python, pipeline package) ===
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-9.1.0, pluggy-1.6.0 -- C:\Users\Manas\AppData\Local\Programs\Python\Python312\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Manas\Downloads\Total Job Application process flow
+configfile: pytest.ini
+plugins: anyio-4.14.1
+collecting ... collected 18 items
+
+tests\test_attribution.py::test_single_position_components_sum_to_actual_pnl PASSED [  5%]
+tests\test_attribution.py::test_reference_oracle_matches_direct_repricing PASSED [ 11%]
+tests\test_attribution.py::test_zero_market_move_gives_zero_pnl_and_zero_residual PASSED [ 16%]
+tests\test_attribution.py::test_small_move_residual_is_small_relative_to_pnl PASSED [ 22%]
+tests\test_attribution.py::test_full_run_produces_250_sessions_across_8_instruments PASSED [ 27%]
+tests\test_attribution.py::test_gap_sessions_have_worse_residual_ratio_than_normal_sessions PASSED [ 33%]
+tests\test_attribution.py::test_component_invariant_holds_across_the_full_run PASSED [ 38%]
+tests\test_attribution.py::test_deterministic_given_same_seed PASSED     [ 44%]
+tests\test_ingest.py::test_duplicate_exact_message_is_noop PASSED        [ 50%]
+tests\test_ingest.py::test_duplicate_many_times_is_still_a_noop PASSED   [ 55%]
+tests\test_ingest.py::test_out_of_order_delivery_same_final_position PASSED [ 61%]
+tests\test_ingest.py::test_fully_reversed_large_stream_matches_forward PASSED [ 66%]
+tests\test_ingest.py::test_position_depends_only_on_accepted_set_not_on_arrival_order_or_duplication PASSED [ 72%]
+tests\test_ingest.py::test_naive_arrival_order_fold_diverges_from_sequence_sorted_fold PASSED [ 77%]
+tests\test_replay.py::test_perturb_stream_preserves_the_message_multiset_of_originals PASSED [ 83%]
+tests\test_replay.py::test_measured_duplicate_fraction_is_close_to_five_percent PASSED [ 88%]
+tests\test_replay.py::test_perturbed_stream_is_actually_reordered_relative_to_canonical PASSED [ 94%]
+tests\test_replay.py::test_full_book_replay_positions_are_bit_identical PASSED [100%]
+
+============================= 18 passed in 0.93s ==============================
+
+=== C++ hand-rolled test suite (WSL2 Ubuntu-22.04, g++ 11.4) ===
+ok: ATM call price matches textbook reference (Hull example)
+ok: put-call parity holds to 1e-9
+ok: delta matches finite-difference derivative w.r.t. S
+ok: gamma matches finite-difference second derivative w.r.t. S
+ok: vega matches finite-difference derivative w.r.t. sigma
+ok: theta matches finite-difference derivative w.r.t. T
+ok: put delta matches finite-difference derivative w.r.t. S
+ok: put delta is negative
+ok: expired ITM call prices at intrinsic value
+ok: expired OTM call prices at zero
+ok: deep ITM call delta approaches 1
+ok: deep OTM call delta approaches 0
+
+all checks passed

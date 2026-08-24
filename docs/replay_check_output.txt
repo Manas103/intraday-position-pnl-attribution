@@ -1,0 +1,9 @@
+canonical stream length: 3974
+perturbed stream length: 4173
+measured duplicate fraction: 5.0075%
+canonical ingest stats: {'total_messages': 3974, 'accepted': 3974, 'duplicates': 0}
+perturbed ingest stats: {'total_messages': 4173, 'accepted': 3974, 'duplicates': 199}
+accepted-message-count match: True
+positions bit-identical (exact ==): True
+
+claim: positions rebuilt bit-identically from a noisy replay -> MEETS

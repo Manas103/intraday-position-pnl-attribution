@@ -1,0 +1,9 @@
+canonical stream length: 6027
+perturbed stream length: 6328
+measured duplicate fraction: 4.9942%
+canonical ingest stats: {'total_messages': 6027, 'accepted': 6027, 'duplicates': 0}
+perturbed ingest stats: {'total_messages': 6328, 'accepted': 6027, 'duplicates': 301}
+accepted-message-count match: True
+positions bit-identical (exact ==): True
+
+claim: bit-identical book rebuilt from a 5% duplicated, out-of-order replay -> MEETS

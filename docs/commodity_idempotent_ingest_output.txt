@@ -1,0 +1,6 @@
+n_repeats=    1  accepted=1  duplicates=0  position=10.0
+n_repeats=   10  accepted=1  duplicates=9  position=10.0
+n_repeats= 1000  accepted=1  duplicates=999  position=10.0
+interleaved duplicates: accepted=2 duplicates=3 position=7.0
+
+claim: idempotent ingest keyed on deal ID and sequence -> MEETS

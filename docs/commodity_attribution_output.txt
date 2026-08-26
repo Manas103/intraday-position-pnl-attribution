@@ -1,0 +1,7 @@
+sessions: 250
+instruments: 12
+total gross P&L (sum |actual_pnl|): 22939.776786
+total unexplained residual (sum |residual|): 0.0000000004
+overall residual ratio: 0.0000000000%
+
+claim: unexplained residual under 1% of gross P&L -> MEETS

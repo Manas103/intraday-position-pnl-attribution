@@ -1,0 +1,11 @@
+﻿rows checked: 2000
+rows where spot-first and vol-first disagree on the vol bucket: 1971 (98.55%)
+mean |vol_bucket_a - vol_bucket_b| (the ambiguous sequential interaction): 0.00932738
+mean |vanna_pnl| (this repo's unambiguous simultaneous cross term): 0.00932714
+
+first 5 rows:
+  OPT00:0  spot_first(vol_bucket=0.065743)  vol_first(vol_bucket=0.065346)  discrepancy=0.000397  vanna_pnl=0.000423
+  OPT00:1  spot_first(vol_bucket=0.408794)  vol_first(vol_bucket=0.403678)  discrepancy=0.005115  vanna_pnl=0.006163
+  OPT00:2  spot_first(vol_bucket=-0.351848)  vol_first(vol_bucket=-0.353640)  discrepancy=0.001792  vanna_pnl=0.001639
+  OPT00:3  spot_first(vol_bucket=-0.496932)  vol_first(vol_bucket=-0.494987)  discrepancy=-0.001945  vanna_pnl=-0.002154
+  OPT00:4  spot_first(vol_bucket=-0.226066)  vol_first(vol_bucket=-0.225214)  discrepancy=-0.000852  vanna_pnl=-0.001002

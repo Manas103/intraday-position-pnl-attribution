@@ -68,6 +68,29 @@ int main() {
         double fd_theta = (bs::price(S, K, T + hT, r, sigma, bs::OptionType::Call) -
                             bs::price(S, K, T - hT, r, sigma, bs::OptionType::Call)) / (2 * hT);
         check(close(g.theta, fd_theta, 1e-3), "theta matches finite-difference derivative w.r.t. T");
+
+        // vanna = d(vega)/dS, volga = d(vega)/dsigma, both cross-checked
+        // against finite differences of vega itself (a second-derivative
+        // cross-check, not the same formula re-derived).
+        auto vega_at = [&](double s, double sig) {
+            return bs::price_and_greeks(s, K, T, r, sig, bs::OptionType::Call).vega;
+        };
+        double fd_vanna = (vega_at(S + hS, sigma) - vega_at(S - hS, sigma)) / (2 * hS);
+        check(close(g.vanna, fd_vanna, 1e-4), "vanna matches finite-difference d(vega)/dS");
+
+        double fd_volga = (vega_at(S, sigma + hVol) - vega_at(S, sigma - hVol)) / (2 * hVol);
+        check(close(g.volga, fd_volga, 1e-3), "volga matches finite-difference d(vega)/dsigma");
+    }
+
+    // 3b) Vanna and volga are identical for call and put (put-call parity's
+    // S-minus-Ke^{-rT} term is linear in S and does not depend on sigma at
+    // all, so it drops out of both second derivatives).
+    {
+        double S = 142.0, K = 150.0, T = 0.9, r = 0.025, sigma = 0.31;
+        auto gc = bs::price_and_greeks(S, K, T, r, sigma, bs::OptionType::Call);
+        auto gp = bs::price_and_greeks(S, K, T, r, sigma, bs::OptionType::Put);
+        check(close(gc.vanna, gp.vanna, 1e-9), "vanna is identical for call and put");
+        check(close(gc.volga, gp.volga, 1e-9), "volga is identical for call and put");
     }
 
     // 4) Put greeks cross-checked the same way.

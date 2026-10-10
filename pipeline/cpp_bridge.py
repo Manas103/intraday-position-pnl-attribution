@@ -5,7 +5,13 @@ Protocol (see cpp/src/attribution_main.cpp for the authoritative spec):
     id,S0,K,T0,r,sigma0,type,S1,sigma1,T1
   stdout, one line per input line, same order, CSV, no header:
     id,price0,price1,actual_pnl,delta0,gamma0,vega0,theta0,
-    delta_pnl,gamma_pnl,vega_pnl,theta_pnl,taylor_sum,residual
+    delta_pnl,gamma_pnl,vega_pnl,theta_pnl,taylor_sum,residual,
+    vanna0,volga0,vanna_pnl,volga_pnl,taylor_sum_full,residual_full
+
+The first 14 fields are the original 4-Greek decomposition, untouched by
+the cross-Greek extension. The last 6 fields are that extension: vanna and
+volga computed simultaneously with delta/gamma/vega/theta from the same
+SOD Greeks, not a second sequential pass.
 """
 
 from __future__ import annotations
@@ -54,6 +60,12 @@ class AttributionResult:
     theta_pnl: float
     taylor_sum: float
     residual: float
+    vanna: float
+    volga: float
+    vanna_pnl: float
+    volga_pnl: float
+    taylor_sum_full: float
+    residual_full: float
 
 
 class EngineNotBuiltError(RuntimeError):
@@ -98,6 +110,12 @@ def run_attribution_batch(requests, binary_path: str | Path | None = None) -> li
                 theta_pnl=float(p[11]),
                 taylor_sum=float(p[12]),
                 residual=float(p[13]),
+                vanna=float(p[14]),
+                volga=float(p[15]),
+                vanna_pnl=float(p[16]),
+                volga_pnl=float(p[17]),
+                taylor_sum_full=float(p[18]),
+                residual_full=float(p[19]),
             )
         )
     return results

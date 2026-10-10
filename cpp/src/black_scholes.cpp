@@ -64,6 +64,9 @@ Greeks price_and_greeks(double S, double K, double T, double r, double sigma, Op
 
     g.gamma = pdf_d1 / (S * sigma * sqrtT);
     g.vega = S * pdf_d1 * sqrtT;
+    // Cross second derivatives: identical for call and put (see header).
+    g.vanna = -pdf_d1 * d2 / sigma;
+    g.volga = g.vega * d1 * d2 / sigma;
 
     return g;
 }

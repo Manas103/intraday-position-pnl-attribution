@@ -15,6 +15,11 @@ struct Greeks {
     double theta;  // per 1.00 year change in time to maturity T
                    // (i.e. d(price)/dT, NOT the conventional "per calendar day"
                    // sign-flipped theta; see README for the exact convention)
+    double vanna;  // d(vega)/dS == d(delta)/dsigma; identical for call and put
+                   // (put-call parity's S-minus-Ke^{-rT} term is linear in S,
+                   // so it vanishes under this second derivative)
+    double volga;  // d(vega)/dsigma, a.k.a. vomma; identical for call and put
+                   // for the same reason
 };
 
 // S: spot, K: strike, T: time to maturity in years, r: continuously

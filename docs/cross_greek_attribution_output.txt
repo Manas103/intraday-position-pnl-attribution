@@ -1,0 +1,19 @@
+﻿sessions: 250
+instruments: 8
+total gross P&L (sum |actual_pnl|): 6070.819516
+
+baseline (delta/gamma/vega/theta) residual ratio:     0.5393%
+cross-Greek (+ vanna/volga) residual ratio:           0.1975%
+absolute reduction in residual ratio: 0.3417 percentage points
+
+baseline gap-session ratio, mean:     0.6417%
+cross-Greek gap-session ratio, mean:  0.2853%
+baseline non-gap ratio, mean:         0.5595%
+cross-Greek non-gap ratio, mean:      0.0938%
+
+sessions with cross-Greek residual ratio still over 1%: 3
+  session 102: residual_full ratio = 1.2485%
+  session 106: residual_full ratio = 1.4913%
+  session 126: residual_full ratio = 1.4502%
+
+claim: baseline residual ~0.54% cut to ~0.12% by cross-Greek terms -> measured 0.5393% cut to 0.1975%

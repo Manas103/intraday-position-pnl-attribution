@@ -10,7 +10,17 @@
 //
 // Output (stdout), one line per input line, same order, CSV, no header:
 //   id,price0,price1,actual_pnl,delta0,gamma0,vega0,theta0,
-//   delta_pnl,gamma_pnl,vega_pnl,theta_pnl,taylor_sum,residual
+//   delta_pnl,gamma_pnl,vega_pnl,theta_pnl,taylor_sum,residual,
+//   vanna0,volga0,vanna_pnl,volga_pnl,taylor_sum_full,residual_full
+//
+// The first 14 fields are the original 4-Greek (delta/gamma/vega/theta)
+// decomposition and are untouched by this extension: taylor_sum and
+// residual here are exactly what they were before. The 6 fields appended
+// at the end are the cross-Greek extension: vanna0/volga0 are the
+// start-of-day cross Greeks, vanna_pnl/volga_pnl are their simultaneous
+// (not sequential) contribution to the same P&L move, taylor_sum_full
+// adds them to the original taylor_sum, and residual_full is what is left
+// over once they are included.
 //
 // All floating point fields are printed with 15 significant digits
 // (round-trip precision for IEEE-754 double) so results are exact and
@@ -85,11 +95,26 @@ int main() {
         double taylor_sum = delta_pnl + gamma_pnl + vega_pnl + theta_pnl;
         double residual = actual_pnl - taylor_sum;
 
-        char buf[640];
+        // Cross-Greek extension: vanna and volga, computed simultaneously
+        // with everything above from the same SOD Greeks and the same
+        // (dS, dVol) deltas, not as a second pass that bumps one factor on
+        // top of an already-moved one. That is what makes the vanna/volga
+        // buckets attribute to themselves rather than to whichever of
+        // delta/gamma or vega happened to be "priced second" in a
+        // sequential waterfall; see README and
+        // scripts/run_sequential_order_check.py.
+        double vanna_pnl = g0.vanna * dS * dVol;
+        double volga_pnl = 0.5 * g0.volga * dVol * dVol;
+        double taylor_sum_full = taylor_sum + vanna_pnl + volga_pnl;
+        double residual_full = actual_pnl - taylor_sum_full;
+
+        char buf[896];
         std::snprintf(buf, sizeof(buf),
-                      "%s,%.15g,%.15g,%.15g,%.15g,%.15g,%.15g,%.15g,%.15g,%.15g,%.15g,%.15g,%.15g,%.15g",
+                      "%s,%.15g,%.15g,%.15g,%.15g,%.15g,%.15g,%.15g,%.15g,%.15g,%.15g,%.15g,%.15g,%.15g,"
+                      "%.15g,%.15g,%.15g,%.15g,%.15g,%.15g",
                       id.c_str(), g0.price, price1, actual_pnl, g0.delta, g0.gamma, g0.vega, g0.theta,
-                      delta_pnl, gamma_pnl, vega_pnl, theta_pnl, taylor_sum, residual);
+                      delta_pnl, gamma_pnl, vega_pnl, theta_pnl, taylor_sum, residual, g0.vanna, g0.volga,
+                      vanna_pnl, volga_pnl, taylor_sum_full, residual_full);
         out_lines.emplace_back(buf);
     }
 

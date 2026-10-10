@@ -16,6 +16,14 @@ a deal blotter and forward curves, with its own P&L attribution into price,
 curve shift, new deals, volume and time, and its own idempotent, replayable
 ingest. Stack for the extension: Python 3.12, SQL (SQLite), pandas.
 
+A second extension (see "Extension: cross-Greek P&L attribution" below)
+adds vanna and volga to the original options book's decomposition,
+computed simultaneously with delta/gamma/vega/theta from the same
+start-of-day Greeks rather than as a second sequential pass, and measures
+how much of the original residual those two cross terms explain, naming
+the sessions where the residual still exceeds 1% rather than averaging
+them away.
+
 ## Why this exists
 
 A trading desk's intraday risk system has to answer two questions
@@ -76,17 +84,21 @@ intraday-position-pnl-attribution/
 │   ├── commodity_simulator.py     seeded commodity universe, forward curves, deal blotter (Extension)
 │   ├── commodity_ingest.py        idempotent deal insert, sequence-sorted position rebuild (Extension)
 │   ├── commodity_replay.py        builds the perturbed commodity deal stream (Extension)
-│   └── commodity_attribution.py   forward book P&L attribution, in pandas, no C++ (Extension)
+│   ├── commodity_attribution.py   forward book P&L attribution, in pandas, no C++ (Extension)
+│   └── sequential_order_check.py  spot-first-vs-vol-first bump attribution comparison (Extension 2)
 ├── scripts/
 │   ├── run_attribution.py       the residual-ratio measurement, exact command in README
 │   ├── run_replay_check.py      the bit-identical replay check, exact command in README
 │   ├── run_idempotent_check.py  the idempotent-ingest demonstration, exact command in README
 │   ├── run_commodity_attribution.py       Extension: forward book residual-ratio measurement
 │   ├── run_commodity_replay_check.py      Extension: forward book bit-identical replay check
-│   └── run_commodity_idempotent_check.py  Extension: forward book idempotent-ingest demonstration
+│   ├── run_commodity_idempotent_check.py  Extension: forward book idempotent-ingest demonstration
+│   ├── run_cross_greek_attribution.py     Extension 2: baseline-vs-cross-Greek residual comparison
+│   └── run_sequential_order_check.py      Extension 2: sequential-order-dependence demonstration
 ├── sql/
 │   └── schema.sql        fills / positions / pnl_attribution tables, plus commodity_* tables (Extension)
-├── tests/                pytest suite (34 tests): ingest, replay, attribution, plus commodity_* (Extension)
+├── tests/                pytest suite (39 tests): ingest, replay, attribution, commodity_* (Extension),
+│                         cross-Greek attribution (Extension 2)
 ├── docs/                 raw committed output of every script and test run referenced below
 └── requirements.txt      pytest and pandas, pinned
 ```
@@ -170,11 +182,12 @@ bounded windows must be bit-identical (Python `==` on the raw tuples, no
 tolerance) to positions built from the canonical, correctly ordered
 stream. `tests/test_replay.py::test_full_book_replay_positions_are_bit_identical`.
 
-Full test output (18 pytest tests, 12 C++ hand-rolled checks):
+Full test output (39 pytest tests, 16 C++ hand-rolled checks; originally
+18 and 12 before the commodity and cross-Greek extensions):
 
 ```
 $ python -m pytest -q
-18 passed in 1.89s
+39 passed in 9.74s
 
 $ wsl.exe -d Ubuntu-22.04 -- bash -lc 'cd cpp && ./build/test_black_scholes'
 ok: ATM call price matches textbook reference (Hull example)
@@ -183,6 +196,10 @@ ok: delta matches finite-difference derivative w.r.t. S
 ok: gamma matches finite-difference second derivative w.r.t. S
 ok: vega matches finite-difference derivative w.r.t. sigma
 ok: theta matches finite-difference derivative w.r.t. T
+ok: vanna matches finite-difference d(vega)/dS
+ok: volga matches finite-difference d(vega)/dsigma
+ok: vanna is identical for call and put
+ok: volga is identical for call and put
 ok: put delta matches finite-difference derivative w.r.t. S
 ok: put delta is negative
 ok: expired ITM call prices at intrinsic value
@@ -549,6 +566,131 @@ python -m pytest -q   # full suite, including the pre-existing 18
   forward book share a SQLite connection type and an idempotency pattern
   but no state; there is no consolidated cross-asset P&L or risk view.
 
+## Extension: cross-Greek P&L attribution (vanna/volga) and a sequential-order-dependence check
+
+Everything above (both the original options book and the commodity forward
+book extension) is untouched: the original 18 pytest tests, the 12 C++
+checks, and the commodity extension's 16 pytest tests all still pass
+unmodified, and the baseline residual ratio (0.5393%) is still computed
+exactly as it was, by the same code path, as one output among several now
+produced by the same run.
+
+This extension adds two cross second-order Greeks, vanna
+(`d(vega)/dS == d(delta)/dsigma`) and volga (`d(vega)/dsigma`, a.k.a.
+vomma), to `cpp/src/black_scholes.hpp`'s closed-form Greeks, and a second,
+fuller Taylor sum, `taylor_sum_full = taylor_sum + vanna_pnl + volga_pnl`,
+computed in the same simultaneous pass over the same start-of-day Greeks
+and the same `(dS, dVol)` market move as the original four terms in
+`cpp/src/attribution_main.cpp`. The original 14 CSV fields this engine
+already produced are unchanged; 6 new fields are appended after them.
+
+**Why "simultaneous" is the load-bearing word.** A common, simpler way to
+add cross-Greek effects is to bump the book sequentially: reprice after
+moving spot, attribute that difference to delta+gamma, then reprice again
+after moving vol on top, and attribute *that* difference to vega. This
+silently hands the entire spot-vol interaction to whichever factor was
+bumped second, and which factor goes second is an arbitrary modeling
+choice, not a property of the market move. `pipeline/sequential_order_check.py`
+proves this is not a hypothetical concern on this book: it reprices the
+same 2,000 position-sessions used everywhere else in this repository at
+three extra market states (spot-only move, vol-only move, both moves) via
+the same C++ reference-oracle pricer, and compares the two possible
+sequential orderings. Result
+(`docs/sequential_order_check_output.txt`): **98.55% of rows get a
+different vol-bucket number depending on which order the same two bumps
+are applied in**, with a mean absolute discrepancy of 0.00932738, almost
+identical to the mean absolute `vanna_pnl` this extension computes
+(0.00932714) from one simultaneous formula with no such choice to make.
+
+### Measured results: cross-Greek attribution
+
+Same machine, same seed, same 250-session/8-instrument universe as the
+original options book measurement above.
+
+```
+baseline (delta/gamma/vega/theta) residual ratio:     0.5393%
+cross-Greek (+ vanna/volga) residual ratio:           0.1975%
+absolute reduction in residual ratio: 0.3417 percentage points
+
+baseline gap-session ratio, mean:     0.6417%
+cross-Greek gap-session ratio, mean:  0.2853%
+baseline non-gap ratio, mean:         0.5595%
+cross-Greek non-gap ratio, mean:      0.0938%
+
+sessions with cross-Greek residual ratio still over 1%: 3
+  session 102: residual_full ratio = 1.2485%
+  session 106: residual_full ratio = 1.4913%
+  session 126: residual_full ratio = 1.4502%
+```
+
+Full transcript: `docs/cross_greek_attribution_output.txt`.
+
+**The residual ratio was cut from 0.5393% to 0.1975%, a 63.4% reduction,
+by adding exactly two more terms to the same simultaneous Taylor sum.**
+The resume line this extension exists to support claims a cut to 0.12%;
+the measured cut lands at 0.1975%, short of that target. This is reported
+as measured: the simulator (seed, drift, vol-of-vol, gap frequency) is
+the original options book's and was not touched to chase this number (see
+"What was and was not tunable" below), so there was exactly one honest
+measurement to make here, not three attempts at different designs.
+
+**3 sessions still exceed 1% residual after the cross-Greek extension**
+(102, 106, 126), not the 9 the resume line names. All three are named
+above, not averaged into the headline ratio; the headline 0.1975% already
+reflects their contribution (the aggregate ratio sums numerators and
+denominators across all 250 sessions before dividing, exactly as the
+baseline ratio does).
+
+### What was and was not tunable
+
+The playbook allows up to 3 genuine attempts per claim before reporting
+the measured value. Here, only one attempt was possible without violating
+a stronger rule: the simulator that produces the 250-session universe
+(`pipeline/simulator.py`) belongs to the original, already-measured
+options book, and its parameters are exactly what produced the 0.5393%
+baseline this extension is supposed to improve on, honestly, not replace.
+Changing `VOL_OF_VOL`, `GAP_EVERY`, or `GAP_SHOCK_MULTIPLIER` to chase a
+0.12% cut or a 9-session tail would have silently changed the baseline
+number too, which the commodity extension's own precedent (and this
+project's instructions) rule out: an extension reports what the existing
+book's numbers become under a strictly additive change, not a reseeded
+book dressed up as the same one. The one free design choice this
+extension had, how to compute the cross terms, was simultaneous Taylor
+expansion from the base Greeks, which is the textbook-correct construction
+and the only one that makes vanna_pnl and volga_pnl well-defined numbers
+rather than order-dependent ones (see the sequential-order-dependence
+result above). There was no second or third design left to try without
+re-opening a question (the simulator's parameters) that this extension
+was not supposed to touch.
+
+### Running it
+
+```bash
+python scripts/run_cross_greek_attribution.py   # baseline vs. cross-Greek residual ratio
+python scripts/run_sequential_order_check.py    # sequential-order-dependence demonstration
+python -m pytest tests/test_cross_greek_attribution.py -q
+python -m pytest -q   # full suite, including the pre-existing 34
+```
+
+### Limitations of this extension
+
+- **No theta cross terms (charm, color).** The extension adds the two
+  spot/vol cross Greeks the resume line names; it does not add the
+  time-cross Greeks, which would further reduce the residual on sessions
+  where `dT` is large relative to `dS`/`dVol`.
+- **The 0.12% target was not reached**, and the shortfall was not chased
+  by touching the simulator (see above); 0.1975% is the honest number for
+  this book.
+- **9 named sessions became 3.** The specific session IDs are an artifact
+  of this simulator's fixed seed and gap schedule, not independently
+  meaningful; a different seed would name different sessions, which is
+  exactly why the seed was not changed to manufacture a particular count.
+- **The sequential-order-dependence check is a demonstration, not a
+  guardrail wired into the production attribution path.** Nothing in
+  `attribution_main.cpp` could ever compute attribution sequentially; the
+  check exists to make the claim falsifiable and measured, not to detect
+  a regression in code that structurally cannot regress this way.
+
 ## Limitations
 
 - The Greeks-based attribution book and the fill-ledger/replay subsystem
@@ -565,9 +707,11 @@ python -m pytest -q   # full suite, including the pre-existing 18
   calibrated to any real market. A materially different parameterization
   would produce a different ratio.
 - Second-order Greeks (delta and gamma) are a genuinely weaker
-  approximation on gap sessions, as shown in Findings; a production system
-  would either revalue more frequently intraday or carry higher-order
-  cross-Greeks (vanna, volga) to close that gap further.
+  approximation on gap sessions, as shown in Findings. The cross-Greek
+  extension (vanna, volga; see "Extension: cross-Greek P&L attribution"
+  above) closes part of that gap, 63.4% of the residual ratio, not all of
+  it; a production system would also need to revalue more frequently
+  intraday to close the rest.
 - The C++/Python subprocess protocol has no schema validation beyond
   field-count and numeric parsing; a malformed line causes the whole
   batch to fail loudly (exit code 2) rather than skipping just that row,

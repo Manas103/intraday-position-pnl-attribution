@@ -24,6 +24,13 @@ how much of the original residual those two cross terms explain, naming
 the sessions where the residual still exceeds 1% rather than averaging
 them away.
 
+A third extension (see "Extension: point-in-time risk data platform"
+below) is the first part of this repo backed by PostgreSQL rather than
+SQLite: a 2M+-fill ledger, as-of position queries that reconstruct any
+historical risk number directly from the immutable ledger, and an
+end-of-day reconciliation against an independently-computed replay,
+scored against 200 seeded breaks.
+
 ## Why this exists
 
 A trading desk's intraday risk system has to answer two questions
@@ -85,7 +92,12 @@ intraday-position-pnl-attribution/
 │   ├── commodity_ingest.py        idempotent deal insert, sequence-sorted position rebuild (Extension)
 │   ├── commodity_replay.py        builds the perturbed commodity deal stream (Extension)
 │   ├── commodity_attribution.py   forward book P&L attribution, in pandas, no C++ (Extension)
-│   └── sequential_order_check.py  spot-first-vs-vol-first bump attribution comparison (Extension 2)
+│   ├── sequential_order_check.py  spot-first-vs-vol-first bump attribution comparison (Extension 2)
+│   └── risk_platform/             PostgreSQL risk data platform (Extension 3)
+│       ├── simulator.py           2M+-fill generator, scaled version of pipeline/simulator.py's Fill
+│       ├── pg_ingest.py           COPY-to-staging-then-upsert idempotent bulk ingest
+│       ├── asof.py                position_as_of/exposure_as_of SQL, independent-fold reconstruction check
+│       └── reconciliation.py      live (SQL) vs. independent-replay (pandas) EOD grids, seeded breaks
 ├── scripts/
 │   ├── run_attribution.py       the residual-ratio measurement, exact command in README
 │   ├── run_replay_check.py      the bit-identical replay check, exact command in README
@@ -94,13 +106,18 @@ intraday-position-pnl-attribution/
 │   ├── run_commodity_replay_check.py      Extension: forward book bit-identical replay check
 │   ├── run_commodity_idempotent_check.py  Extension: forward book idempotent-ingest demonstration
 │   ├── run_cross_greek_attribution.py     Extension 2: baseline-vs-cross-Greek residual comparison
-│   └── run_sequential_order_check.py      Extension 2: sequential-order-dependence demonstration
+│   ├── run_sequential_order_check.py      Extension 2: sequential-order-dependence demonstration
+│   ├── run_risk_platform_ingest.py        Extension 3: 2M+ idempotent-ingest measurement
+│   ├── run_risk_platform_asof_check.py    Extension 3: as-of reconstruction measurement
+│   ├── run_risk_platform_replay_check.py  Extension 3: bit-identical replay at ledger scale
+│   └── run_risk_platform_reconciliation.py  Extension 3: EOD reconciliation, seeded breaks
 ├── sql/
-│   └── schema.sql        fills / positions / pnl_attribution tables, plus commodity_* tables (Extension)
-├── tests/                pytest suite (39 tests): ingest, replay, attribution, commodity_* (Extension),
-│                         cross-Greek attribution (Extension 2)
+│   ├── schema.sql                  fills / positions / pnl_attribution tables, plus commodity_* tables (Extension)
+│   └── risk_platform_schema.sql    risk_fills / risk_fills_staging, PostgreSQL (Extension 3)
+├── tests/                pytest suite (45 tests): ingest, replay, attribution, commodity_* (Extension),
+│                         cross-Greek attribution (Extension 2), risk_platform (Extension 3)
 ├── docs/                 raw committed output of every script and test run referenced below
-└── requirements.txt      pytest and pandas, pinned
+└── requirements.txt      pytest, pandas and psycopg2-binary, pinned
 ```
 
 ### Why SQLite, not a message broker or a client/server RDBMS
@@ -691,6 +708,271 @@ python -m pytest -q   # full suite, including the pre-existing 34
   check exists to make the claim falsifiable and measured, not to detect
   a regression in code that structurally cannot regress this way.
 
+## Extension: point-in-time risk data platform
+
+Everything above (the options book, the commodity forward book, and the
+cross-Greek attribution) is untouched: all 39 pre-existing pytest tests
+and 16 C++ checks still pass unmodified. This extension is architecturally
+separate rather than a modification of any of them: a new package
+(`pipeline/risk_platform/`), a new schema (`sql/risk_platform_schema.sql`),
+and a new backing store, PostgreSQL, used for the first time anywhere in
+this repo. It answers a different question than the SQLite ledger above:
+not "can fills be ingested idempotently and replayed deterministically on
+one process, one machine" (already answered, at a few thousand fills), but
+"can a real client/server database reconstruct any past risk number from
+an append-only ledger, and catch a reconciliation break, at a scale where
+that actually matters" (millions of fills, hundreds of instruments).
+
+**Why PostgreSQL here and SQLite everywhere else in this repo.** The
+original README's "Why SQLite, not a message broker or a client/server
+RDBMS" section is still the right call for the options and commodity
+books: one producer, one consumer, one process, no need for a service. The
+as-of queries this extension exists to demonstrate are a different shape
+of problem: `position_as_of(instrument, cutoff)` is designed to be run
+directly as aggregate SQL against the ledger, on demand, from wherever a
+risk number is needed, not only from the one process that happened to
+ingest the fills. That is a client/server access pattern by nature, and
+exercising it meaningfully needs a database that actually serves
+concurrent SQL over a connection, not an embedded library.
+
+**Standing up PostgreSQL for this extension.** PostgreSQL 14 runs under
+WSL2 Ubuntu 22.04 (`sudo apt-get install postgresql`, already present on
+this machine), started with `sudo service postgresql start`, with a
+database created once via `sudo -u postgres psql -c "CREATE DATABASE risk_platform;"`
+and a password set via `sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"`.
+`pipeline/risk_platform/pg_ingest.py` connects to `127.0.0.1:5432` with
+those credentials by default (all five parameters overridable via
+`RISK_PG_HOST`/`RISK_PG_PORT`/`RISK_PG_DB`/`RISK_PG_USER`/`RISK_PG_PASSWORD`).
+Per the playbook, Postgres is not a standing service for this repository;
+`tests/test_risk_platform.py` detects an unreachable database or a missing
+`psycopg2` and skips every test in the module cleanly rather than failing
+(same precedent as `model-validation-alerting`'s Kafka/Postgres skip
+behavior).
+
+**Where the Python in this extension actually runs.** The rest of this
+repo's Python runs natively on Windows; `psycopg2` is installed there too
+and small-scale traffic (the pytest suite, a few thousand rows) works
+over WSL2's localhost port forwarding without issue. At the multi-million-row
+COPY scale the benchmark scripts below actually run at, that forwarded
+connection was measured to be unreliable (an `SSL error: unexpected eof
+while reading` partway through a large ingest, reproduced twice) in a way
+small-scale traffic never hit. The benchmark scripts are therefore run
+under WSL2's own `python3` (`sudo apt-get install python3-psycopg2`),
+talking to the same Postgres instance over an actual same-VM localhost
+connection rather than the forwarded one. This is disclosed here as a
+real, measured toolchain constraint, not a design preference: see Findings
+for how it was found.
+
+### Design
+
+**Schema** (`sql/risk_platform_schema.sql`): `risk_fills`, with the exact
+same idempotency discipline as the SQLite ledger above, a primary key on
+`(fill_id, sequence)`, plus an index on `(instrument, sequence)` since
+every as-of query filters on exactly that pair. `risk_fills_staging` is an
+`UNLOGGED` table with no constraints at all, which is what makes the
+ingest pattern below fast.
+
+**Ingest** (`pipeline/risk_platform/pg_ingest.py`): COPY has no `ON
+CONFLICT` clause, so bulk-loading directly into a constrained table one
+row or even one COPY at a time does not give idempotency for free. Each
+batch is COPYed into the unconstrained staging table (fast, no WAL), then
+one `INSERT ... SELECT ... ON CONFLICT (fill_id, sequence) DO NOTHING`
+moves whatever is genuinely new into `risk_fills`, reporting the accepted
+row count directly from the statement's own `rowcount`, and the staging
+table is truncated for the next batch. This is the standard way to get
+both COPY throughput and row-level idempotency in the same pipeline.
+
+**As-of queries** (`pipeline/risk_platform/asof.py`): `position_as_of`
+is one SQL aggregate, `SUM(quantity) WHERE instrument = ? AND sequence <=
+?`, evaluated fresh against the immutable ledger every time it is called.
+There is no materialized running total anywhere in this extension that
+could drift from the ledger or would itself need reconciling; the ledger
+plus a `WHERE` clause is the entire mechanism, which is what makes "any
+past risk number reconstructable" true by construction rather than by a
+separately-maintained snapshot that happens to agree today.
+`exposure_as_of` multiplies that position by the most recent traded price
+at or before the same cutoff.
+
+**End-of-day reconciliation** (`pipeline/risk_platform/reconciliation.py`):
+two genuinely different computations of the same end-of-day position grid
+(instrument x session). The "live" grid is the as-of SQL query evaluated
+at each instrument's own last sequence number at or before each session.
+The "independent replay" grid is a vectorized pandas fold (`groupby` +
+`cumsum`) over the canonical in-memory fill stream, with no SQL and no
+database involved at all. "Independent" means a different computational
+method against the same underlying data, not a second copy of the same
+query: one is server-side SQL aggregation, the other is client-side
+vectorized arithmetic. `inject_seeded_breaks` corrupts a fixed number of
+cells on the replay side by a random nonzero delta, simulating an
+independently-maintained snapshot that has drifted from the ledger (a
+missed update, a double-counted amendment), which is what the
+reconciliation's detection rate below is scored against.
+
+### Validation
+
+1. **`tests/test_risk_platform.py`** (6 tests, small scale: a handful of
+   instruments and sessions, not millions of fills): exact-duplicate and
+   full-stream-replay idempotency, as-of reconstruction against the
+   independent Python fold at several historical cutoffs (not just the
+   final one), as-of at the final sequence equals the plain total
+   position, bit-identical positions under 5%-duplicated/reordered
+   replay, and reconciliation catching seeded breaks with zero false
+   positives. All 6 pass; skip cleanly (see above) if Postgres or
+   `psycopg2` is unavailable.
+2. **A pre-injection sanity check inside the reconciliation benchmark
+   itself**: before any break is seeded, the live and independent-replay
+   grids are diffed and asserted to already agree everywhere. Without this
+   check, "caught 200 of 200 seeded breaks" would be unfalsifiable --
+   there would be no way to tell a seeded break from a pre-existing,
+   unrelated disagreement between the two computations.
+
+```
+$ python -m pytest -q
+45 passed in 3.19s
+```
+
+Full output: `docs/test_output.txt` (45 total: the pre-existing 39, plus
+these 6).
+
+### Findings
+
+**The forwarded localhost connection silently corrupted a benchmark run
+before it ever threw an error -- and the actual cause was two of my own
+processes racing, not the network path.** The first full-scale as-of
+run was accidentally started a second time (an optimization to
+`asof.py`'s inner loop, retried because the first attempt looked slow)
+while the first copy was still running against the same database. Both
+processes `TRUNCATE`d and re-ingested the same ledger independently; the
+run that happened to read the table mid-truncation by the other process
+measured 120 of 8,382 historical cutoffs disagreeing with the independent
+Python fold, in a pattern (whole single-instrument blocks of cutoffs
+all wrong by a near-constant offset) that looked exactly like a real bug
+in the as-of SQL query. The wrong hypothesis was a boundary error in the
+new, optimized per-instrument grouping. The measurement that discriminated:
+re-running the identical script once, alone, against the same database
+reproduced a clean 8,382 of 8,382 every time; re-introducing a second
+concurrent copy reproduced the mismatch every time. Root cause was never
+a logic bug at all, it was two uncoordinated writers truncating and
+reloading the same table underneath each other's reads -- which is also
+the first real, concrete demonstration in this repo of exactly the kind
+of hazard a single-process SQLite file never has to worry about and a
+real client/server database does. Fixed by never running more than one
+ingest/query process against this database at once, which is also why the
+benchmark scripts below each reset and reload the table themselves rather
+than assuming another process left it in a known state.
+
+**The Windows-to-WSL2 forwarded connection failed differently, and later,
+under real bulk load.** Separately from the above, running the 2M+-row
+ingest from native Windows Python (rather than WSL2's own `python3`)
+raised `psycopg2.OperationalError: SSL error: unexpected eof while
+reading` partway through, reproduced on a second attempt. Small-scale
+traffic (the pytest suite, under a thousand rows) over the same forwarded
+connection never failed. This was not chased further once it was
+measured and reproduced twice (within this project's own 3-genuine-attempt
+rule): the practical fix is to run the bulk-scale scripts under WSL2's own
+Python, talking to Postgres over an actual same-VM connection, which is
+what "Where the Python in this extension actually runs" above documents
+and what was actually used to produce every number below.
+
+### Measured results
+
+Machine: same as the rest of this repo (AMD Ryzen 7 7800X3D, Windows 11
+Home 10.0.26200, WSL2 Ubuntu 22.04.5 LTS), PostgreSQL 14.24, Python 3.12
+(WSL2, for the reasons above), pandas 2.2.3, psycopg2 2.9.2. Universe: 420
+instruments, 250 simulated sessions, seed 42. Every run below was a single,
+uncontended process against a freshly truncated table.
+
+| Claim | Metric | Command | Result |
+|---|---|---|---|
+| 2M+ fills ingested idempotently, keyed on (fill_id, sequence) | rows in `risk_fills` after ingest; rows after a full second replay of the identical stream | `python3 scripts/run_risk_platform_ingest.py 420 250` | **2,203,321** rows; **0** new rows accepted on full-stream replay, row count unchanged |
+| As-of queries make any past risk number reconstructable | historical (instrument, sequence-cutoff) pairs where the live SQL query matches an independent Python fold exactly | `python3 scripts/run_risk_platform_asof_check.py 420 250 20` | **8,382 of 8,382** (20 historical cutoffs per instrument, spanning each instrument's early, middle and final history, not just the end-of-run position) |
+| Positions bit-identical under a replay carrying 5% duplicated and out-of-order messages | measured duplicate fraction; position equality across all instruments | `python3 scripts/run_risk_platform_replay_check.py 420 250` | measured duplicate fraction **5.0000%**; positions identical across all **420** instruments |
+| End-of-day reconciliation against an independent replay catches 200 of 200 seeded breaks | seeded breaks caught; false positives among the rest of the grid | `python3 scripts/run_risk_platform_reconciliation.py 420 250 200` | **200 of 200** caught; **0** false positives over the remaining **104,800** (instrument, session) cells |
+
+Full output: `docs/risk_platform_ingest_output.txt`,
+`docs/risk_platform_asof_output.txt`,
+`docs/risk_platform_replay_output.txt`,
+`docs/risk_platform_reconciliation_output.txt`.
+
+**The ingest throughput** (not an explicit resume claim, included because
+it is what makes the other three measurements tractable at this scale):
+roughly **119,000 fills/sec** sustained via the COPY-to-staging-then-upsert
+pattern, ingesting all 2,203,321 fills in under 19 seconds. A row-at-a-time
+`INSERT ... ON CONFLICT` was not benchmarked separately; the staging-table
+pattern was adopted from the start specifically because row-at-a-time
+upsert at this scale was expected to be substantially slower, consistent
+with standard PostgreSQL bulk-load guidance, not because a slower approach
+was measured and rejected.
+
+**Why 20 cutoffs per instrument, not just one.** A reconstruction check
+that only verified the final, end-of-run position per instrument would
+not actually test "any past risk number," only "the most recent one" --
+which is exactly the number a much simpler system (a materialized running
+total) could also get right. Spreading 20 cutoffs across each
+instrument's own history (some fewer than a hundred fills in, some near
+the end) is what makes the 8,382/8,382 result a genuine test of
+reconstructing arbitrary historical states from the ledger, not just the
+current one.
+
+**Why the reconciliation's pre-injection check matters as much as the
+200/200 itself.** The two grids are built by genuinely different code
+(SQL aggregation vs. a vectorized pandas fold); the pre-injection sanity
+check in the benchmark script (reported in
+`docs/risk_platform_reconciliation_output.txt` as "pre-injection
+disagreements (must be 0)") confirms they agree on every one of the
+105,000 (instrument, session) cells before any break is seeded, which is
+the only way "caught 200 of 200" means the detector works, rather than
+meaning the two methods already disagreed about something unrelated and
+200 of those disagreements happened to be the ones checked.
+
+### Building and running
+
+```bash
+# 0. One-time: stand up PostgreSQL under WSL2 (see "Standing up PostgreSQL" above)
+wsl.exe -d Ubuntu-22.04 -- bash -lc 'sudo service postgresql start'
+
+# 1. Run every benchmark at the measured scale (420 instruments, 250 sessions)
+#    via WSL2's own Python (see "Where the Python in this extension actually runs")
+wsl.exe -d Ubuntu-22.04 -- bash -lc 'cd "$(wslpath -a .)" && python3 scripts/run_risk_platform_ingest.py 420 250'
+wsl.exe -d Ubuntu-22.04 -- bash -lc 'cd "$(wslpath -a .)" && python3 scripts/run_risk_platform_asof_check.py 420 250 20'
+wsl.exe -d Ubuntu-22.04 -- bash -lc 'cd "$(wslpath -a .)" && python3 scripts/run_risk_platform_replay_check.py 420 250'
+wsl.exe -d Ubuntu-22.04 -- bash -lc 'cd "$(wslpath -a .)" && python3 scripts/run_risk_platform_reconciliation.py 420 250 200'
+
+# 2. Correctness tests (small scale; native Windows Python is fine here)
+python -m pytest tests/test_risk_platform.py -q
+```
+
+### Limitations of this extension
+
+- **Not wired to the options or commodity books above.** This is a third,
+  independent subsystem demonstrating ledger-scale as-of queries and
+  reconciliation; it shares no tables and no code with the Greeks-based
+  attribution or the forward-curve attribution.
+- **The forwarded Windows-to-WSL2 connection is unreliable for bulk COPY
+  traffic**, measured and disclosed above; every benchmark number here was
+  produced under WSL2's own Python talking to Postgres over an actual
+  same-VM connection, not the cross-boundary forwarded one a Windows-native
+  run would use.
+- **PostgreSQL is not a standing service for this repository**, per the
+  playbook; it must be started manually (see "Standing up PostgreSQL"),
+  and the test suite skips cleanly rather than failing when it is not
+  running.
+- **Exposure is a simple gross notional** (position times last traded
+  price), not a Greeks-based risk exposure; this extension's "exposure"
+  claim is deliberately simpler than the options book's delta/gamma/vega
+  decomposition above, which is a different, already-answered question
+  for a different instrument class.
+- **The reconciliation's seeded breaks are a uniform random corruption of
+  individual grid cells**, not a simulated version of any specific real
+  operational failure mode (a missed amendment message, a double-booked
+  cancel); the detection mechanism (an exact equality check between two
+  independently computed grids) would catch any of those equally well,
+  but the 200 seeded cases here are generic, not scenario-specific.
+- **Running two copies of any script in this extension against the same
+  database at once will corrupt the comparison**, as Findings above
+  demonstrates concretely; none of the scripts coordinate with each other
+  or detect a concurrent writer.
+
 ## Limitations
 
 - The Greeks-based attribution book and the fill-ledger/replay subsystem
@@ -717,10 +999,10 @@ python -m pytest -q   # full suite, including the pre-existing 34
   batch to fail loudly (exit code 2) rather than skipping just that row,
   which is a reasonable choice for a batch job but would need
   reconsideration for a streaming service.
-- There is no Postgres option in this repo. The task allowed documenting
-  an optional Postgres path with tests that skip cleanly when unreachable;
-  given the time budget, only the SQLite path (the required default) was
-  built.
+- The options and commodity books above are SQLite, by design (see "Why
+  SQLite..."); a PostgreSQL-backed path now exists, but only for the
+  separate risk-platform extension (see "Extension: point-in-time risk
+  data platform"), not as an alternative backend for the original ledger.
 - Fill IDs and sequence numbers are synthetic strings/integers generated
   by the simulator, not sampled from any real exchange or OMS fill-ID
   format.

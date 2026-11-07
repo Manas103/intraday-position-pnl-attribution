@@ -1,0 +1,5 @@
+instruments=420 sessions=250 cutoffs_per_instrument=20
+historical as-of cutoffs checked: 8382
+matched independent Python fold exactly: 8382
+
+meets 'any past risk number reconstructable': True (8382 of 8382)

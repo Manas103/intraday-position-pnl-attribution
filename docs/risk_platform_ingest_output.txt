@@ -1,0 +1,9 @@
+instruments=420 sessions=250 seed=42
+canonical stream generated: 2203321 fills
+first ingest pass: accepted=2203321 in 18.43s (119564 fills/sec)
+rows in risk_fills after first pass: 2203321
+second ingest pass (full-stream replay): accepted=0
+rows in risk_fills after second pass: 2203321
+
+meets '2M+ fills ingested idempotently': True (measured 2203321)
+idempotent under full-stream replay: True

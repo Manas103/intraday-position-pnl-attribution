@@ -1,0 +1,10 @@
+instruments=420 sessions=250 grid cells=105000
+pre-injection disagreements (must be 0): 0
+seeded breaks: 200
+caught: 200 of 200
+missed: 0
+false positives (flagged but not seeded): 0
+clean cells (not seeded, not flagged): 104800
+
+meets '200 of 200 seeded breaks caught': True
+meets '0 false positives': True

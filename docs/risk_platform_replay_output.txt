@@ -1,0 +1,7 @@
+instruments=420 sessions=250
+canonical stream: 2203321 messages
+perturbed stream: 2313487 messages, measured duplicate fraction 5.0000%
+accepted (canonical ingest): 2203321
+accepted (perturbed ingest): 2203321
+distinct-fill counts match: True
+final positions bit-identical across all 420 instruments: True

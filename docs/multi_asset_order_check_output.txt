@@ -1,0 +1,6 @@
+total instrument-sessions: 10000
+USD-denominated rows: 250 (disagree: 0)
+foreign-currency rows: 9750 (disagree: 9750)
+mean abs discrepancy: 32.232920
+
+ROWS WHERE PRICE-FIRST AND FX-FIRST DISAGREE: 9750 of 10000 (97.50%)  (claimed 98.6%)

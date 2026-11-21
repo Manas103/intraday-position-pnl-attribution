@@ -1,0 +1,10 @@
+instruments: 40  sessions: 250
+
+per asset class:
+  CREDIT: n_instruments=15 gross=51986170.86 residual=350.5967 ratio=0.0007%
+  EQ: n_instruments=15 gross=4409253.02 residual=0.0000 ratio=0.0000%
+  RATE: n_instruments=10 gross=43286887.92 residual=308.5180 ratio=0.0007%
+
+total gross P&L: 99682311.8074
+total unexplained residual: 659.1148
+OVERALL RESIDUAL RATIO: 0.0007%  (claimed 0.20%)
